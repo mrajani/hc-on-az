@@ -11,3 +11,23 @@ output "key_vault" {
     module.kms.az_key_vault.vault_uri
   ]
 }
+
+output "stacct_pkey" {
+  value     = module.storageaccount.stacct_pkey
+  sensitive = true
+}
+output "azimages" {
+  value = module.azimages.azimages[*].name
+}
+
+output "azimage" {
+  value = module.azimages.azimage
+}
+output "vmss_custom_data" {
+  value     = module.vault.vmss_custom_data
+  sensitive = true
+}
+
+output "data_vmss" {
+  value = module.vault.data_vmss
+}

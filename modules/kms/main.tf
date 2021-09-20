@@ -6,7 +6,7 @@ locals {
 }
 
 resource "azurerm_key_vault" "current" {
-  name                = format("%s-key", var.tags["Name"])
+  name                = format("%s-key-%s", var.tags["Name"], var.tags["suffix"])
   location            = local.location
   resource_group_name = local.rg_name
   tenant_id           = local.tenant_id
@@ -18,10 +18,13 @@ resource "azurerm_key_vault" "current" {
     tenant_id = local.tenant_id
     object_id = local.object_id
     key_permissions = [
-      "get", "list", "create", "delete", "update"
+      "Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"
     ]
     secret_permissions = [
       "Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"
+    ]
+    certificate_permissions = [
+      "Get", "List", "Create", "Delete", "Update", "Purge"
     ]
   }
   tags = var.tags
@@ -41,4 +44,15 @@ resource "azurerm_key_vault_key" "generated" {
     "verify",
     "wrapKey",
   ]
+}
+
+resource "random_string" "vm_password" {
+  length = 16
+}
+resource "azurerm_key_vault_secret" "generated" {
+  name         = format("%s-azsecret", var.rg_name)
+  value        = random_string.vm_password.result
+  key_vault_id = azurerm_key_vault.current.id
+  tags         = var.tags
+
 }

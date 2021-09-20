@@ -1,0 +1,117 @@
+---
+  - name: Get Resource Groups
+    hosts: localhost
+    gather_facts: no
+    connection: local
+    collections:
+      - azure.azcollection
+#------ Variables Declaration -----------#
+    vars_files:
+      - vars.yml
+#-------------- Tasks -----------------#
+    tasks:
+      - name: Generate a random string for Terraform remote state storage account
+        set_fact:
+          suffix: "{{lookup('community.general.random_string', upper=false, special=false, length=10)}}"
+
+      - name: Get facts for one resource group including resources it contains
+        azure_rm_resourcegroup_info:
+        register: rg_info
+
+      - name: Debug resource group Info
+        debug:
+          verbosity: 3
+          var: rg_info
+
+      - name: Print Resource Groups Name
+        set_fact:
+          rg_name: "{{ rg_info | json_query(query) }}"
+        vars:
+          query: "resourcegroups[?name.contains(@, '{{ rg_name_regex }}' )].name"
+        # query: "resourcegroups[?name=='IonoWork'].id"
+
+      - name: Get facts for one subscription
+        azure_rm_subscription_info:
+        register: subscription
+
+      - name: Debug
+        debug:
+          var: subscription
+
+#----- Get Login User name and Tenant Id --------------#
+      - name: Get logged in account user name
+        shell:
+          cmd: az account list | jq '.[].user.name' | tr -d '"'
+        register:
+            user_principal
+
+      - name: Get Tenant Id for the logged in account
+        shell:
+          cmd: az account list | jq '.[].tenantId' | tr -d '"'
+        register:
+            tenant_id
+
+      - name: Get facts for AD user
+        azure_rm_aduser_info:
+          user_principal_name: "{{ user_principal.stdout }}"
+          tenant: "{{ tenant_id.stdout }}"
+        register: aduser
+
+#------ Print out rg, subscription, tenant id, user name ----#
+      - name: Debug Info
+        debug:
+          msg: "{{ item }}"
+          verbosity: 4
+        with_items:
+          - "Resource Group {{rg_name}}"
+          - "Tenant ID {{subscription | json_query('subscriptions[0].tenant_id')}}"
+          - "User Principal {{user_principal.stdout}}"
+          - "Tenant ID {{tenant_id.stdout}}"
+        # - "Object ID {{ aduser.ad_users[0].object_id }}"
+
+      - name: Create RBAC Service Principal
+        shell:
+          az ad sp create-for-rbac -n "{{ app_display_name }}" --role Contributor
+        register:
+          adsp
+
+      - name:
+        set_fact:
+          adsp_json: "{{ adsp.stdout | from_json }}"
+
+      - name:
+        set_fact:
+          client_id: "{{ adsp_json.appId }}"
+          secret: "{{ adsp_json.password }}"
+          tenant: "{{ adsp_json.tenant }}"
+
+      - name: Save Credentials
+        blockinfile:
+          create: yes
+          path: ./sp_credentials
+          content: |
+            [default]
+            client_id = "{{ client_id }}"
+            secret = "{{ secret }}"
+            subscription_id = "{{subscription | json_query('subscriptions[0].subscription_id')}}"
+            tenant = "{{ tenant }}"
+
+#------ Create AD Application ID ---------------------------#
+      # - name: Create ad application
+      #   azure_rm_adapplication:
+      #     tenant: "{{subscription | json_query('subscriptions[0].tenant_id')}}"
+      #     display_name: "{{ app_display_name }}"
+      #   register: adapplication
+
+      # - name: Print AD Application
+      #   debug:
+      #     var: adapplication
+
+#------ Create Service Principal ---------------------------#
+#       - name: Create AD Service Principal
+#         azure_rm_adserviceprincipal:
+#           app_id: "{{ adapplication.app_id }}"
+#           tenant: "{{subscription | json_query('subscriptions[0].tenant_id')}}"
+#           app_role_assignment_required: yes
+#           state: present
+#         register: adsp

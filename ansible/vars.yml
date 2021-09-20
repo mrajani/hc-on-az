@@ -1,0 +1,12 @@
+rg_tfvars: ../rg.auto.tfvars
+packer_var: ../packer/variables.pkrvars.hcl
+storageaccount_file: ./staccount.yml
+terraform_backend: ../backend.tf
+storageaccount_name: tfstaccount
+container_name: tfstate-container
+rg_name_regex: HCOps
+user_name_regex: mahesh
+subs_name_regex: Sponsorship
+az_keyvault: hc-keyvault
+app_display_name: sandbox-app
+logit: false

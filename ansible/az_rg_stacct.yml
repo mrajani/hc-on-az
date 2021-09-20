@@ -1,0 +1,155 @@
+---
+  - name: Get Resource Groups
+    hosts: localhost
+    gather_facts: no
+    connection: local
+    collections:
+      - azure.azcollection
+#------ Variables Declaration -----------#
+    vars_files:
+      - vars.yml
+    vars:
+      r_uuid: "{{ rg_name_regex | random(seed=inventory_hostname)| to_uuid| lower }}"
+      r_temp: "{{ inventory_hostname | to_uuid | lower }}"
+#-------------- Tasks -----------------#
+    tasks:
+      - name: Generate a random string for Terraform remote state storage account
+        set_fact:
+          suffix: "{{ r_uuid.split('-')[4] }}"
+
+#----- Get Resource Group Info --------------#
+      - name: Get facts for one resource group including resources it contains
+        azure_rm_resourcegroup_info:
+        register: rg_info
+
+      - name: Print Resource Groups Name
+        set_fact:
+          rg_name: "{{ rg_info | json_query(query) }}"
+        vars:
+          query: "resourcegroups[?name.contains(@, '{{ rg_name_regex }}' )].name"
+        # query: "resourcegroups[?name=='IonoWork'].id"
+
+#----- Get Subscription Information --------------#
+      - name: Get info for Subscription, caveat returns only one
+        azure_rm_subscription_info:
+        register: subscription
+
+      - name: Subscription debug
+        debug:
+          msg: "{{subscription | json_query('subscriptions[0].tenant_id')}}"
+        when: logit
+
+#----- Get Login User name and Tenant Id --------------#
+      - name: Get logged-in Account User Name
+        shell:
+          cmd: az account list  | jq -r '.[] | select(.isDefault==true) | .user.name'
+        register:
+            user_principal
+
+      # az ad sp list | jq -r '.[]| select(.userPrincipalName=="cloud_user_p_c341469e@azurelabs.linuxacademy.com")| .objectId'
+      - name: Get facts for service principal
+        azure_rm_adserviceprincipal_info:
+          app_id: "{{ user_principal.stdout }}"
+          tenant: "{{subscription | json_query('subscriptions[0].tenant_id')}}"
+        register: spuser
+
+#------ Print out rg, subscription, tenant id, user name ----#
+      - name: Debug Info
+        debug:
+          msg: "{{ item }}"
+          verbosity: 0
+        when: logit
+        with_items:
+          - "Resource Group {{rg_name}}"
+          - "Tenant ID {{subscription | json_query('subscriptions[0].tenant_id')}}"
+          - "User Principal {{user_principal.stdout}}"
+          - "Object ID {{ spuser.service_principals[0].object_id }}"
+          - "Suffix {{ suffix }}"
+
+#------ Create AD Application ID ---------------------------#
+      # - name: Create ad application
+      #   azure_rm_adapplication:
+      #     tenant: "{{subscription | json_query('subscriptions[0].tenant_id')}}"
+      #     display_name: "{{ app_display_name }}"
+
+#------ Create Key Vault ---------------------------#
+
+      - name: Create instance of Key Vault
+        azure_rm_keyvault:
+          resource_group: "{{ rg_name[0] }}"
+          vault_name: "{{ az_keyvault }}-{{ suffix }}"
+          enabled_for_deployment: yes
+          enabled_for_template_deployment: yes
+          enable_soft_delete: no
+          vault_tenant: "{{ subscription | json_query('subscriptions[0].tenant_id') }}"
+          sku:
+            name: standard
+          access_policies:
+            - tenant_id: "{{ subscription | json_query('subscriptions[0].tenant_id') }}"
+              object_id: "{{ spuser.service_principals[0].object_id }}"
+              keys: ["Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"]
+              secrets: ["Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"]
+              certificates: ["Get" , "List" , "Create" , "Delete" , "Update", "Purge"]
+
+      - name: Write into variables files for Terraform
+        blockinfile:
+          create: yes
+          path: "{{rg_tfvars}}"
+          mode: '0644'
+          block: |
+            rg_name = "{{ rg_name[0] }}"
+            # location = "{{ rg_info.resourcegroups[0].location }}"
+
+      - name: Write into variables files for Packer`
+        lineinfile:
+          path: "{{packer_var}}"
+          mode: '0644'
+          regexp: '^({{ item.key | regex_escape() }}.*=)'
+          backrefs: yes
+          line: \1 "{{ item.value}}"
+        with_items:
+          - { key: rg_name, value: "{{ rg_name[0] }}" }
+          - { key: location, value: "{{ rg_info.resourcegroups[0].location }}" }
+
+
+      - name: Create a storage account for remote state
+        azure_rm_storageaccount:
+          resource_group: "{{ rg_name[0] }}"
+          name: "{{storageaccount_name}}{{ suffix }}"
+          type: Standard_RAGRS
+          tags:
+            UseFor: Store TF Remote State
+
+      - name: Create container/ blob for tfstate
+        azure_rm_storageblob:
+          resource_group: "{{ rg_name[0] }}"
+          storage_account_name: "{{storageaccount_name}}{{suffix}}"
+          container: "{{container_name}}-{{suffix}}"
+
+      - name: Save resource group and storage account in file
+        blockinfile:
+          path: "{{storageaccount_file}}"
+          create: yes
+          content: |
+            ---
+            rg_name: "{{ rg_name[0] }}"
+            storageaccount: "{{storageaccount_name}}{{suffix}}"
+            container: "{{container_name}}-{{suffix}}"
+            keyvault: "{{ az_keyvault }}-{{ suffix }}"
+            tenant_id: "{{ subscription | json_query('subscriptions[0].tenant_id') }}"
+            object_id: "{{ spuser.service_principals[0].object_id }}"
+            user_principal_name: "{{ user_principal.stdout }}"
+
+      - name: Create Terraform backend.tf for remote state
+        blockinfile:
+          path: "{{terraform_backend}}"
+          create: yes
+          content: |
+            terraform {
+              backend "azurerm" {
+                resource_group_name  = "{{ rg_name[0] }}"
+                storage_account_name = "{{storageaccount_name}}{{suffix}}"
+                container_name       = "{{container_name}}-{{suffix}}"
+                key                  = "terraform.tfstate"
+              }
+            }

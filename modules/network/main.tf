@@ -8,7 +8,6 @@ resource "azurerm_virtual_network" "main" {
   address_space       = [var.vnet_cidr]
   location            = local.location
   resource_group_name = local.rg_name
-  dns_servers         = var.dns_servers
   tags                = var.tags
 }
 

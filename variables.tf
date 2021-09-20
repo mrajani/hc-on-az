@@ -1,11 +1,7 @@
 variable "rg_name" {}
-variable "client_id" {}
-variable "client_secret" {}
-variable "tenant_id" {}
-variable "subscription_id" {}
 
 variable "vnet_cidr" {
-  default = "10.172.0.0/16"
+  default = "10.68.0.0/16"
 }
 
 variable "tags" {
@@ -13,4 +9,3 @@ variable "tags" {
   default = {
   }
 }
-

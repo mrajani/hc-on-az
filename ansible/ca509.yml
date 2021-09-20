@@ -1,0 +1,125 @@
+---
+- hosts: localhost
+  gather_facts: true
+  connection: local
+  vars:
+    - certs_folder: ../packer/certificates
+    - service: vault
+    - certs_root: ionovault
+    - key_size: 2048
+    - passphrase: # Set if you want passphrase
+    - key_type: RSA # Others include DSA, ECC, Ed25519, Ed448, X25519, X448
+    - country_name: US
+    - email_address: admin@vault.local
+    - organization_name: "Iono"
+    - ca_common_name: "Iono Vault-CA"
+    - common_name: "Iono Vault-aaS"
+    - secret_ca_passphrase: "chalk-p0le-Basket-V1ru$-ra1n"
+
+  tasks:
+    #--------- Self Signed CA Root Certificate -------------------#
+    - name: Create certificates folder
+      file:
+        path: "{{certs_folder}}"
+        state: directory
+        group: "{{ ansible_env.USER }}"
+        owner: "{{ ansible_env.USER }}"
+
+    - name: Create private key with password protection
+      community.crypto.openssl_privatekey:
+        path: "{{certs_folder}}/{{ certs_root }}-ca.cert.key"
+        passphrase: "{{ secret_ca_passphrase }}"
+        cipher: auto
+        size: "{{ key_size }}"
+
+    - name: Create certificate signing request (CSR) for CA certificate
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{certs_folder}}/{{ certs_root }}-ca.cert.key"
+        privatekey_passphrase: "{{ secret_ca_passphrase }}"
+        common_name: "{{ ca_common_name }}"
+        country_name: "{{ country_name }}"
+        organization_name: "{{ organization_name }}"
+        use_common_name_for_san: false  # since we do not specify SANs, don't use CN as a SAN
+        basic_constraints:
+          - 'CA:TRUE'
+        basic_constraints_critical: yes
+        key_usage:
+          - keyCertSign
+          - digitalSignature
+          - keyEncipherment
+        key_usage_critical: true
+      register: ca_csr
+
+    - name: Create self-signed CA certificate from CSR
+      community.crypto.x509_certificate:
+        path: "{{certs_folder}}/{{ certs_root }}-ca.cert.pem"
+        csr_content: "{{ ca_csr.csr }}"
+        privatekey_path: "{{certs_folder}}/{{ certs_root }}-ca.cert.key"
+        privatekey_passphrase: "{{ secret_ca_passphrase }}"
+        provider: selfsigned
+
+    - name: Rename CA cert pem file
+      copy:
+        src: "{{certs_folder}}/{{ certs_root }}-ca.cert.pem"
+        dest: "{{certs_folder}}/ca.crt.pem"
+
+    #--------- CA Signed Cert for Vault Server -------------------#
+    # https://docs.ansible.com/ansible/latest/collections/community/crypto/docsite/guide_ownca.html #
+    # https://fabianlee.org/2018/02/17/ubuntu-creating-a-self-signed-san-certificate-using-openssl/ #
+    # Good use case #
+    - name: Create private key for new certificate for Vault service
+      community.crypto.openssl_privatekey:
+        path: "{{certs_folder}}/{{ service }}.key.pem"
+        size: "{{ key_size }}"
+
+
+    - name: Create certificate signing request (CSR) for Vault Service
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{certs_folder}}/{{ service }}.key.pem"
+        common_name: "{{ common_name }}"
+        country_name: "{{ country_name }}"
+        organization_name: "{{ organization_name }}"
+        basic_constraints:
+          - 'CA:FALSE'
+        basic_constraints_critical: yes
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        subject_alt_name:
+          - "DNS:localhost"
+          - "DNS:*.vault.service"
+          - "DNS:*.vault.internal"
+          - "DNS:*.vault.test"
+          - "DNS:*.vault.dev"
+          - "DNS:*.*"
+          - "DNS:*.*.*"
+          - "IP:127.0.0.1"
+      register: csr
+
+    - name: Debugg
+      debug: msg={{ csr.csr }}
+
+    - name: Sign certificate with our CA for Vault server
+      community.crypto.x509_certificate_pipe:
+        csr_content: "{{ csr.csr }}"
+        provider: ownca
+        ownca_path: "{{certs_folder}}/{{ certs_root }}-ca.cert.pem"
+        ownca_privatekey_path: "{{certs_folder}}/{{ certs_root }}-ca.cert.key"
+        ownca_privatekey_passphrase: "{{ secret_ca_passphrase }}"
+        ownca_not_after: +365d  # valid for one year
+        ownca_not_before: "-1d"  # valid since yesterday
+      register: certificate
+
+    - name: Write certificate file in certificates folder
+      copy:
+        dest: "{{certs_folder}}/{{ service }}.crt.pem"
+        content: "{{ certificate.certificate }}"
+      delegate_to: local
+      run_once: true
+
+    - name: Chmod files 0644 in {{ certs_folder }}
+      file:
+        path: "{{ item }}"
+        mode: '0644'
+      with_fileglob:
+        - "{{ certs_folder }}/*.pem"

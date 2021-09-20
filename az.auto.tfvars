@@ -1,7 +1,5 @@
-rg_name = "IonoWork"
-
 tags = {
-  Name        = "IonoDemo"
+  Name        = "hc-on-az"
   Environment = "Production"
-  RandomCode  = "6LC90DQFLBJ60G9R"
+  RandomCode  = "9LC9PDQFQBJ60G9S"
 }

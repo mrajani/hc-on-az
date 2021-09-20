@@ -1,0 +1,59 @@
+{
+  "min_packer_version": "1.7.4",
+  "variables": {
+    "rg_name": "1-620fc508-playground-sandbox",
+    "location" : "East US",
+    "vm_size" : "Standard_D2S_v3"
+  },
+  "builders": [
+    {
+      "use_azure_cli_auth": true,
+      "name": "focal-vhd",
+      "type": "azure-arm",
+      "subscription_id": "{{user `subscription_id`}}",
+      "client_id": "{{user `client_id`}}",
+      "client_secret": "{{user `client_secret`}}",
+      "tenant_id": "{{user `tenant_id`}}",
+      "build_resource_group_name": "{{user `rg_name`}}",
+      "managed_image_resource_group_name": "{{user `rg_name`}}",
+      "managed_image_name": "vault-focal-{{uuid}}",
+      "os_type": "Linux",
+      "image_publisher": "Canonical",
+      "image_offer": "UbuntuServer",
+      "image_sku": "18.04-LTS",
+      "vm_size": "{{user `vm_size`}}",
+      "ssh_username": "ubuntu",
+      "azure_tags": {
+        "dept": "DevOps",
+        "task": "Image deployment",
+        "UseFor": "Vault-Consul-ASG",
+        "vault_consul_member": "join",
+        "Distro": "Ubuntu"
+      }
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "inline_shebang": "/bin/sh -x",
+      "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
+      "inline": [
+        "echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections",
+        "sudo apt-get -q update && sudo apt-get install -y python3-pip curl unzip jq git",
+        "sudo pip3 install ansible pywinrm"
+      ],
+      "pause_before": "30s",
+      "only": ["focal-vhd"]
+    },
+    {
+
+      "type": "shell",
+      "inline_shebang": "/bin/sh -x",
+      "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
+      "inline": [
+        "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
+      ]
+    }
+
+  ]
+}

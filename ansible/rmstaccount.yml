@@ -1,0 +1,75 @@
+---
+  - name: Get Resource Groups
+    hosts: localhost
+    gather_facts: no
+    connection: local
+    collections:
+      - azure.azcollection
+    vars_files:
+      - vars.yml
+
+    tasks:
+      - name: Read file in yml format
+        set_fact:
+          rg: "{{ lookup('file', '{{ storageaccount_file }}')|from_yaml }}"
+
+      - name: Find all Images under subscription and resource group
+        azure_rm_image_info:
+          resource_group: "{{rg.rg_name}}"
+          tags:
+            - UseFor:Vault-Consul-AzSS
+        register: images
+
+      - name: Images and Sources
+        set_fact:
+          vault_images: "{{ images | json_query('images[*].[{name: name, source: source}]') }}"
+
+      - name: Debug
+        debug:
+          msg: "{{ item.name }} {{ item.source }}"
+        with_items: "{{vault_images}}"
+        when: logit
+
+      - name: Delete an image
+        azure_rm_image:
+          state: absent
+          resource_group: "{{rg.rg_name}}"
+          name: "{{ item.name }}"
+          source: "{{ item.source }}"
+        with_items: "{{vault_images}}"
+
+      - name: Get facts for storage account
+        azure_rm_storageaccount_info:
+          resource_group: "{{rg.rg_name}}"
+          name: "{{rg.storageaccount}}"
+        register: storageaccount_info
+
+      - name: Delete storage container / blob
+        azure_rm_storageblob:
+          resource_group:  "{{rg.rg_name}}"
+          storage_account_name: "{{rg.storageaccount}}"
+          container: "{{rg.container}}"
+          state: absent
+          force: yes
+
+      - name: Delete storage account
+        azure_rm_storageaccount:
+          resource_group: "{{rg.rg_name}}"
+          name: "{{rg.storageaccount}}"
+          state: absent
+
+      - name: Delete instance of Key Vault
+        azure_rm_keyvault:
+          resource_group: "{{rg.rg_name}}"
+          vault_name: "{{ rg.keyvault }}"
+          state: absent
+
+      - name: clean up files
+        tags: clean
+        file:
+          state: absent
+          path: "{{item}}"
+        with_items:
+          - "{{storageaccount_file}}"
+          - "{{terraform_backend}}"
+          - "{{rg_tfvars}}"

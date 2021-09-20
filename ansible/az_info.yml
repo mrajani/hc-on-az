@@ -1,0 +1,70 @@
+---
+  - name: Get Resource Groups
+    hosts: localhost
+    gather_facts: no
+    connection: local
+    collections:
+      - azure.azcollection
+    vars_files:
+      - vars.yml
+
+    tasks:
+      - name: Get facts for one resource group including resources it contains
+        azure_rm_resourcegroup_info:
+        register: rg_info
+
+      - name: Print Resource Group Info
+        debug:
+          msg: "{{ rg_info }}"
+        when: logit
+
+      - name: Print Resource Groups
+        debug:
+          msg: "{{ rg_info | json_query(query) }}"
+        vars:
+          query: "resourcegroups[?name.contains(@, '{{ rg_name_regex }}' )].name"
+        when: logit
+        # query: "resourcegroups[?name=='IonoWork'].id"
+
+      - name: Get logged in account user name
+        shell:
+          cmd: az account list  | jq -r '.[] | select(.isDefault==true) | .user.name'
+          # az ad user list | jq -r '.[] |select(.userPrincipalName | contains("{{ user_name_regex }}") | .userPrincipalName)'
+        register:
+            user_principal
+
+      - name: Get Tenant Id for the logged in account
+        shell:
+          cmd: az account list | jq -r '.[].tenantId'
+        register:
+            tenant_id
+
+      - name: Print user_principal and tenant_id
+        debug:
+          verbosity: 0
+          msg: "User Principal {{ user_principal.stdout }} Tenant ID: {{ tenant_id.stdout }}"
+        when: logit
+
+        # az ad sp list | jq -r '.[] | select(.userPrincipalName | contains("cloud_user"))| .objectId'
+      - name: Get facts for service principal
+        azure_rm_adserviceprincipal_info:
+          app_id: "{{ user_principal.stdout }}"
+          tenant: "{{ tenant_id.stdout }}"
+        register: spuser
+
+      - name: Print spuser Info
+        debug:
+          verbosity: 0
+          msg: "{{ spuser.service_principals[0].object_id }}"
+
+      - name: Get logged in account user name
+        shell: # escape double quotes, double escape single quote for az account list cmd
+          cmd: "az account list --query \"[?isDefault == \\`true\\`].{tenant: tenantId, user: user.name}\""
+        register:
+            user_principal_tenant
+
+      - name: Print User Principal and Tenant
+        debug:
+          verbosity: 0
+          msg: "{{ item.tenant }} {{ item.user }}"
+        with_items: "{{ user_principal_tenant.stdout }}"
