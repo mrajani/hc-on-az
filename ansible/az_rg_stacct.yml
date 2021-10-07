@@ -11,18 +11,15 @@
     vars:
       r_uuid: "{{ rg_name_regex | random(seed=inventory_hostname)| to_uuid| lower }}"
       r_temp: "{{ inventory_hostname | to_uuid | lower }}"
+      suffix: "{{ r_uuid.split('-')[4] }}"
 #-------------- Tasks -----------------#
     tasks:
-      - name: Generate a random string for Terraform remote state storage account
-        set_fact:
-          suffix: "{{ r_uuid.split('-')[4] }}"
-
 #----- Get Resource Group Info --------------#
-      - name: Get facts for one resource group including resources it contains
+      - name: get_rg_info
         azure_rm_resourcegroup_info:
         register: rg_info
 
-      - name: Print Resource Groups Name
+      - name: set_fact_rg_name
         set_fact:
           rg_name: "{{ rg_info | json_query(query) }}"
         vars:
@@ -30,7 +27,7 @@
         # query: "resourcegroups[?name=='IonoWork'].id"
 
 #----- Get Subscription Information --------------#
-      - name: Get info for Subscription, caveat returns only one
+      - name: get_subscription_info
         azure_rm_subscription_info:
         register: subscription
 
@@ -40,24 +37,23 @@
         when: logit
 
 #----- Get Login User name and Tenant Id --------------#
-      - name: Get logged-in Account User Name
+      - name: get_user_principal
         shell:
           cmd: az account list  | jq -r '.[] | select(.isDefault==true) | .user.name'
         register:
             user_principal
 
       # az ad sp list | jq -r '.[]| select(.userPrincipalName=="cloud_user_p_c341469e@azurelabs.linuxacademy.com")| .objectId'
-      - name: Get facts for service principal
+      - name: get_service_principal
         azure_rm_adserviceprincipal_info:
           app_id: "{{ user_principal.stdout }}"
           tenant: "{{subscription | json_query('subscriptions[0].tenant_id')}}"
         register: spuser
 
 #------ Print out rg, subscription, tenant id, user name ----#
-      - name: Debug Info
+      - name: debug_info_1
         debug:
           msg: "{{ item }}"
-          verbosity: 0
         when: logit
         with_items:
           - "Resource Group {{rg_name}}"
@@ -73,8 +69,7 @@
       #     display_name: "{{ app_display_name }}"
 
 #------ Create Key Vault ---------------------------#
-
-      - name: Create instance of Key Vault
+      - name: create_key_vault
         azure_rm_keyvault:
           resource_group: "{{ rg_name[0] }}"
           vault_name: "{{ az_keyvault }}-{{ suffix }}"
@@ -90,8 +85,55 @@
               keys: ["Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"]
               secrets: ["Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"]
               certificates: ["Get" , "List" , "Create" , "Delete" , "Update", "Purge"]
+        register: keyvault_id
 
-      - name: Write into variables files for Terraform
+      - name: get_keyvault_info
+        azure_rm_keyvault_info:
+          resource_group: "{{ rg_name[0] }}"
+          name: "{{ az_keyvault }}-{{ suffix }}"
+        register: keyvault_info
+
+      - name: print_keyvault_info
+        debug:
+          var: keyvault_info
+        when: logit
+
+      - name: set_fact_keyvault_uri
+        set_fact: keyvault_uri="{{ keyvault_info | json_query('keyvaults[0].vault_uri') }}"
+
+      - name: print_keyvault_uri
+        debug:
+          var: keyvault_uri # "{{keyvault_info.keyvaults[0].name}} {{keyvault_uri}}"
+
+      - name: create_keyVault_key
+        azure_rm_keyvaultkey:
+          key_name: "{{ az_keyvault }}-autounseal-{{ suffix }}"
+          keyvault_uri: "{{keyvault_uri}}"
+
+      - name: print_keyVault_key
+        azure_rm_keyvaultkey_info:
+          name: "{{ az_keyvault }}-autounseal-{{ suffix }}"
+          vault_uri: "{{keyvault_uri}}"
+
+      - name: create_keyVault_secret
+        azure_rm_keyvaultsecret:
+          secret_name: "{{ az_keyvault }}-secret-{{ suffix }}"
+          secret_value: "{{suffix}}"
+          keyvault_uri: "{{keyvault_uri}}"
+
+      - name: write_keyvault_key_to_yml
+        blockinfile:
+          create: yes
+          path: "{{az_keyvault_vars}}"
+          mode: '0644'
+          block: |
+            vault_name: "{{ az_keyvault }}-{{ suffix }}"
+            key_name: "{{ az_keyvault }}-autounseal-{{ suffix }}"
+            tenant_id: "{{ subscription | json_query('subscriptions[0].tenant_id') }}"
+            vault_version: "1.8.3"
+
+#------ Write vars for Terraform and Packer in respective files ---------#
+      - name: write_vars_tf
         blockinfile:
           create: yes
           path: "{{rg_tfvars}}"
@@ -99,8 +141,10 @@
           block: |
             rg_name = "{{ rg_name[0] }}"
             # location = "{{ rg_info.resourcegroups[0].location }}"
+            keyvault_unseal_name = "{{ az_keyvault }}-{{ suffix }}"
+            keyvault_unseal_key = "{{ az_keyvault }}-autounseal-{{ suffix }}"
 
-      - name: Write into variables files for Packer`
+      - name: write_vars_packer
         lineinfile:
           path: "{{packer_var}}"
           mode: '0644'
@@ -111,8 +155,8 @@
           - { key: rg_name, value: "{{ rg_name[0] }}" }
           - { key: location, value: "{{ rg_info.resourcegroups[0].location }}" }
 
-
-      - name: Create a storage account for remote state
+#------ Create Storage Account and Container for Remote State ----------------#
+      - name: create_storage_account
         azure_rm_storageaccount:
           resource_group: "{{ rg_name[0] }}"
           name: "{{storageaccount_name}}{{ suffix }}"
@@ -120,13 +164,14 @@
           tags:
             UseFor: Store TF Remote State
 
-      - name: Create container/ blob for tfstate
+      - name: create_blob_tfstate
         azure_rm_storageblob:
           resource_group: "{{ rg_name[0] }}"
           storage_account_name: "{{storageaccount_name}}{{suffix}}"
           container: "{{container_name}}-{{suffix}}"
 
-      - name: Save resource group and storage account in file
+#------ Save vars values in the playbook  ---------------------------#
+      - name: save_values
         blockinfile:
           path: "{{storageaccount_file}}"
           create: yes
@@ -136,11 +181,13 @@
             storageaccount: "{{storageaccount_name}}{{suffix}}"
             container: "{{container_name}}-{{suffix}}"
             keyvault: "{{ az_keyvault }}-{{ suffix }}"
+            keyvault_key: "{{ az_keyvault }}-autounseal-{{ suffix }}"
             tenant_id: "{{ subscription | json_query('subscriptions[0].tenant_id') }}"
             object_id: "{{ spuser.service_principals[0].object_id }}"
             user_principal_name: "{{ user_principal.stdout }}"
 
-      - name: Create Terraform backend.tf for remote state
+#------ Save backend.tf ---------------------------#
+      - name: create_backend.tf
         blockinfile:
           path: "{{terraform_backend}}"
           create: yes

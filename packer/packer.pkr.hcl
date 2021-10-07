@@ -33,7 +33,8 @@ build {
     sources = [
       "./certificates/ca.crt.pem",
       "./certificates/vault.crt.pem",
-      "./certificates/vault.key.pem"
+      "./certificates/vault.key.pem",
+      "az_keyvault_vars.yml"
     ]
     destination = "/tmp/"
   }
@@ -44,7 +45,8 @@ build {
       "echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections",
       "sudo cp /tmp/ca.crt.pem /usr/local/share/ca-certificates/ionovault.crt",
       "sudo /usr/sbin/update-ca-certificates",
-      "sudo cp /tmp/*.*.pem /usr/local/etc/"
+      "sudo cp /tmp/*.*.pem /usr/local/etc/",
+      "sudo cp /tmp/az_keyvault_vars.yml /usr/local/etc/",
     ]
     inline_shebang = "/bin/sh -x"
     only           = ["azure-arm.focal-vhd"]

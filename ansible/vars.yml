@@ -2,6 +2,7 @@ rg_tfvars: ../rg.auto.tfvars
 packer_var: ../packer/variables.pkrvars.hcl
 storageaccount_file: ./staccount.yml
 terraform_backend: ../backend.tf
+az_keyvault_vars: ../packer/az_keyvault_vars.yml
 storageaccount_name: tfstaccount
 container_name: tfstate-container
 rg_name_regex: HCOps
