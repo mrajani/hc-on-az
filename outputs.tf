@@ -31,3 +31,7 @@ output "vmss_custom_data" {
 output "data_vmss" {
   value = module.vault.data_vmss
 }
+
+output "managed_id" {
+  value = module.vault.managed_id
+}

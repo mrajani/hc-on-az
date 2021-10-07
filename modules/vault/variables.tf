@@ -16,3 +16,7 @@ variable "vault_port" {
 }
 variable "vmss_vault_subnets" {}
 variable "vault_azimage" {}
+variable "app_config" {}
+variable "managed_id" {}
+variable "client_config" {}
+variable "subscription" {}

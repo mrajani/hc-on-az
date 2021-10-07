@@ -112,14 +112,14 @@ resource "azurerm_linux_virtual_machine_scale_set" "vault" {
     public_key = tls_private_key.vault.public_key_openssh
   }
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.vault_ua_msi.id]
-  }
-
   source_image_id = var.vault_azimage
   zones           = ["1", "2", "3"]
   zone_balance    = true
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [var.managed_id.id]
+  }
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"

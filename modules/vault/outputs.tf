@@ -11,7 +11,6 @@ output "vmss_custom_data" {
 output "data_vmss" {
   value = data.azurerm_virtual_machine_scale_set.vault_vmss
 }
-
-output "vault_ua_msi" {
-  value = azurerm_user_assigned_identity.vault_ua_msi.id
+output "managed_id" {
+  value = azurerm_user_assigned_identity.vault_msi
 }

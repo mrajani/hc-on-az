@@ -1,48 +1,82 @@
 locals {
-  location  = var.location
-  rg_name   = var.rg_name
-  tenant_id = var.tenant_id
-  object_id = var.object_id
+  location = var.location
+  rg_name  = var.rg_name
+
+}
+
+data "azurerm_key_vault" "vault" {
+  name                = var.keyvault_unseal_name
+  resource_group_name = local.rg_name
+}
+
+resource "azurerm_key_vault_access_policy" "unseal" {
+  key_vault_id = data.azurerm_key_vault.vault.id
+  tenant_id    = var.client_config.tenant_id
+  object_id    = var.managed_id.principal_id
+  key_permissions = [
+    "Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"
+  ]
+  secret_permissions = [
+    "Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"
+  ]
+  certificate_permissions = [
+    "Get", "List", "Create", "Delete", "Update", "Purge"
+  ]
 }
 
 resource "azurerm_key_vault" "current" {
-  name                = format("%s-key-%s", var.tags["Name"], var.tags["suffix"])
+  name                = format("%s-kv-%s", var.tags["Name"], var.tags["suffix"])
   location            = local.location
   resource_group_name = local.rg_name
-  tenant_id           = local.tenant_id
+  tenant_id           = var.client_config.tenant_id
   sku_name            = "standard"
 
   enabled_for_deployment          = true
   enabled_for_template_deployment = true
-  access_policy {
-    tenant_id = local.tenant_id
-    object_id = local.object_id
-    key_permissions = [
-      "Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"
-    ]
-    secret_permissions = [
-      "Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"
-    ]
-    certificate_permissions = [
-      "Get", "List", "Create", "Delete", "Update", "Purge"
-    ]
-  }
+
   tags = var.tags
 }
 
+resource "azurerm_key_vault_access_policy" "self" {
+  key_vault_id = azurerm_key_vault.current.id
+  tenant_id    = var.client_config.tenant_id
+  object_id    = var.client_config.object_id
+  key_permissions = [
+    "Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"
+  ]
+  secret_permissions = [
+    "Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"
+  ]
+  certificate_permissions = [
+    "Get", "List", "Create", "Delete", "Update", "Purge"
+  ]
+}
+
+resource "azurerm_key_vault_access_policy" "mi" {
+  key_vault_id = azurerm_key_vault.current.id
+  tenant_id    = var.client_config.tenant_id
+  object_id    = var.managed_id.principal_id
+  key_permissions = [
+    "Get", "List", "Create", "Delete", "Update", "Purge", "WrapKey", "UnwrapKey"
+  ]
+  secret_permissions = [
+    "Backup", "Delete", "Get", "List", "Purge", "Recover", "Restore", "Set"
+  ]
+  certificate_permissions = [
+    "Get", "List", "Create", "Delete", "Update", "Purge"
+  ]
+}
+
 resource "azurerm_key_vault_key" "generated" {
-  name         = format("%s-azkey", var.rg_name)
+  name         = format("%s-key-%s", var.tags["Name"], var.tags["suffix"])
   key_vault_id = azurerm_key_vault.current.id
   key_type     = "RSA"
   key_size     = 2048
   tags         = var.tags
-  key_opts = [
-    "decrypt",
-    "encrypt",
-    "sign",
-    "unwrapKey",
-    "verify",
-    "wrapKey",
+  key_opts     = ["decrypt", "encrypt", "sign", "verify", "unwrapKey", "wrapKey"]
+  depends_on = [
+    azurerm_key_vault_access_policy.mi,
+    azurerm_key_vault_access_policy.self
   ]
 }
 
@@ -50,9 +84,12 @@ resource "random_string" "vm_password" {
   length = 16
 }
 resource "azurerm_key_vault_secret" "generated" {
-  name         = format("%s-azsecret", var.rg_name)
+  name         = format("%s-secret-%s", var.tags["Name"], var.tags["suffix"])
   value        = random_string.vm_password.result
   key_vault_id = azurerm_key_vault.current.id
   tags         = var.tags
-
+  depends_on = [
+    azurerm_key_vault_access_policy.mi,
+    azurerm_key_vault_access_policy.self
+  ]
 }
